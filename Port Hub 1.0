@@ -1,0 +1,255 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- Approximate Castle of the Sea position. Adjust to your map/version.
+local CASTLE_OF_SEA = CFrame.new(-5076, 314, -3152)
+local COCOA_NAMES = { ["Cocoa Warrior"] = true, ["Chocolate Bar Battler"] = true }
+local ITEM_TRIGGERS = { ["Chalice"] = true, ["First of Darkness"] = true }
+local ATTACK_RANGE = 60
+
+local state = { cocoa = false, chest = false, notifier = false, attack = false }
+local log
+
+local function addLog(msg)
+    if log then
+        log.Text = ("> " .. msg .. "\n" .. log.Text):sub(1, 600)
+    end
+end
+
+local function getRoot()
+    local char = player.Character
+    return char and char:FindFirstChild("HumanoidRootPart"), char and char:FindFirstChildOfClass("Humanoid")
+end
+
+local function teleport(cf)
+    local root = getRoot()
+    if root then root.CFrame = cf end
+end
+
+local function getEnemies()
+    local list = {}
+    local folder = workspace:FindFirstChild("Enemies") or workspace
+    for _, m in ipairs(folder:GetDescendants()) do
+        if m:IsA("Model") and m:FindFirstChildOfClass("Humanoid") and m:FindFirstChild("HumanoidRootPart") then
+            if m:FindFirstChildOfClass("Humanoid").Health > 0 then
+                table.insert(list, m)
+            end
+        end
+    end
+    return list
+end
+
+local function attackWithTool()
+    local char = player.Character
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    if tool then tool:Activate() end
+end
+
+-- GUI ------------------------------------------------------------------------
+local GREEN = Color3.fromRGB(0, 255, 110)
+local DARK = Color3.fromRGB(5, 5, 5)
+local PANEL = Color3.fromRGB(12, 20, 12)
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "PortHub"
+gui.ResetOnSpawn = false
+gui.Parent = playerGui
+
+local main = Instance.new("Frame")
+main.Size = UDim2.fromOffset(360, 470)
+main.Position = UDim2.new(0.5, -180, 0.5, -235)
+main.BackgroundColor3 = DARK
+main.Active = true
+main.Draggable = true
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 6)
+local stroke = Instance.new("UIStroke", main)
+stroke.Color = GREEN
+stroke.Thickness = 2
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 40)
+title.BackgroundColor3 = PANEL
+title.Text = "> PORT HUB [ACCESS GRANTED]"
+title.TextColor3 = GREEN
+title.Font = Enum.Font.Code
+title.TextSize = 18
+title.Parent = main
+
+local container = Instance.new("Frame")
+container.Position = UDim2.fromOffset(10, 50)
+container.Size = UDim2.new(1, -20, 0, 250)
+container.BackgroundTransparency = 1
+container.Parent = main
+local layout = Instance.new("UIListLayout", container)
+layout.Padding = UDim.new(0, 8)
+
+local function makeToggle(text, key, order, onChange)
+    local btn = Instance.new("TextButton")
+    btn.LayoutOrder = order
+    btn.Size = UDim2.new(1, 0, 0, 36)
+    btn.BackgroundColor3 = PANEL
+    btn.TextColor3 = GREEN
+    btn.Font = Enum.Font.Code
+    btn.TextSize = 16
+    btn.AutoButtonColor = false
+    btn.Parent = container
+    Instance.new("UIStroke", btn).Color = GREEN
+
+    local function refresh()
+        btn.Text = string.format("[%s] %s", state[key] and "ON " or "OFF", text)
+        btn.BackgroundColor3 = state[key] and Color3.fromRGB(0, 70, 30) or PANEL
+    end
+    refresh()
+    btn.MouseButton1Click:Connect(function()
+        state[key] = not state[key]
+        refresh()
+        addLog(text .. (state[key] and " enabled" or " disabled"))
+        if onChange then onChange(state[key]) end
+    end)
+end
+
+makeToggle("Auto Farm Cocoa", "cocoa", 1)
+makeToggle("Auto Collect Chests", "chest", 2)
+makeToggle("Fruit Notifier", "notifier", 3)
+makeToggle("Auto Attack", "attack", 4)
+
+local fruitBox = Instance.new("TextLabel")
+fruitBox.LayoutOrder = 5
+fruitBox.Size = UDim2.new(1, 0, 0, 70)
+fruitBox.BackgroundColor3 = PANEL
+fruitBox.TextColor3 = GREEN
+fruitBox.TextXAlignment = Enum.TextXAlignment.Left
+fruitBox.TextYAlignment = Enum.TextYAlignment.Top
+fruitBox.Font = Enum.Font.Code
+fruitBox.TextSize = 13
+fruitBox.TextWrapped = true
+fruitBox.Text = "[FRUIT SCAN] idle"
+fruitBox.Parent = container
+
+log = Instance.new("TextLabel")
+log.Position = UDim2.new(0, 10, 1, -150)
+log.Size = UDim2.new(1, -20, 0, 140)
+log.BackgroundColor3 = PANEL
+log.TextColor3 = GREEN
+log.TextXAlignment = Enum.TextXAlignment.Left
+log.TextYAlignment = Enum.TextYAlignment.Top
+log.Font = Enum.Font.Code
+log.TextSize = 13
+log.TextWrapped = true
+log.Text = "> system online"
+log.Parent = main
+
+-- FEATURE LOOPS --------------------------------------------------------------
+-- Auto Farm Cocoa: teleport to target NPCs and attack them
+task.spawn(function()
+    while task.wait(0.15) do
+        if state.cocoa then
+            local root = getRoot()
+            if root then
+                for _, npc in ipairs(getEnemies()) do
+                    if COCOA_NAMES[npc.Name] and state.cocoa then
+                        local npcRoot = npc.HumanoidRootPart
+                        root.CFrame = npcRoot.CFrame * CFrame.new(0, 0, 3)
+                        attackWithTool()
+                        break
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- Auto Collect Chests: visit chests, then check for trigger items
+task.spawn(function()
+    while task.wait(0.5) do
+        if state.chest then
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if not state.chest then break end
+                if obj.Name:find("Chest") then
+                    local part = obj:IsA("BasePart") and obj or (obj:IsA("Model") and obj.PrimaryPart)
+                    if part then
+                        teleport(part.CFrame + Vector3.new(0, 3, 0))
+                        pcall(function()
+                            local root = getRoot()
+                            if root and firetouchinterest then
+                                firetouchinterest(root, part, 0)
+                                firetouchinterest(root, part, 1)
+                            end
+                        end)
+                        task.wait(0.3)
+                    end
+                end
+            end
+
+            local bag = player:FindFirstChild("Backpack")
+            local char = player.Character
+            for _, container in ipairs({ bag, char }) do
+                if container then
+                    for _, item in ipairs(container:GetChildren()) do
+                        if ITEM_TRIGGERS[item.Name] then
+                            addLog("Trigger item found: " .. item.Name)
+                            teleport(CASTLE_OF_SEA)
+                            state.chest = false
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- Fruit Notifier: list nearby fruit with distance and position
+task.spawn(function()
+    while task.wait(2) do
+        if state.notifier then
+            local root = getRoot()
+            if root then
+                local found = {}
+                for _, obj in ipairs(workspace:GetDescendants()) do
+                    if obj.Name:find("Fruit") and (obj:IsA("Model") or obj:IsA("Tool") or obj:IsA("BasePart")) then
+                        local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
+                        if part then
+                            local dist = math.floor((part.Position - root.Position).Magnitude)
+                            local p = part.Position
+                            table.insert(found, { name = obj.Name, dist = dist,
+                                pos = string.format("%d, %d, %d", p.X, p.Y, p.Z) })
+                        end
+                    end
+                end
+                table.sort(found, function(a, b) return a.dist < b.dist end)
+                local lines = { "[FRUIT SCAN]" }
+                for i = 1, math.min(4, #found) do
+                    local f = found[i]
+                    table.insert(lines, string.format("%s | %d studs | at (%s)", f.name, f.dist, f.pos))
+                end
+                if #found == 0 then table.insert(lines, "no fruit detected") end
+                fruitBox.Text = table.concat(lines, "\n")
+            end
+        end
+    end
+end)
+
+-- Auto Attack: damage nearby NPCs automatically
+task.spawn(function()
+    while task.wait(0.2) do
+        if state.attack then
+            local root = getRoot()
+            if root then
+                for _, npc in ipairs(getEnemies()) do
+                    local npcRoot = npc:FindFirstChild("HumanoidRootPart")
+                    if npcRoot and (npcRoot.Position - root.Position).Magnitude <= ATTACK_RANGE then
+                        attackWithTool()
+                        break
+                    end
+                end
+            end
+        end
+    end
+end)
+
+addLog("Port Hub loaded. Toggle features to begin.")
