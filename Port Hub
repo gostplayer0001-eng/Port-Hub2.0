@@ -1,0 +1,208 @@
+local Players = game:GetService("Players")
+local VirtualUser = game:GetService("VirtualUser")
+local TweenService = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+
+local CONFIG = {
+    CocoaNames = { "Cocoa Warrior", "Chocolate Bar Battler" },
+    ChestStopItems = { "Chalice", "First of Darkness" },
+    CastleOfTheSeaCFrame = CFrame.new(0, 50, 0), -- Replace with the real Castle of the Sea coordinates
+    FarmOffset = CFrame.new(0, 0, 4),
+    AttackRange = 60,
+    BaseAttackDelay = 0.15,
+    FastAttackSpeedBoost = 0.05, -- 5% faster attacks when Fast Attack is on
+    ChestTweenTime = 1.5,
+}
+
+local state = {
+    AutoFarm = false,
+    AutoAttack = false,
+    FastAttack = false,
+    AutoChest = false,
+}
+
+local currentTarget = nil
+
+local function getRoot()
+    local char = LocalPlayer.Character
+    if not char then return nil, nil end
+    return char:FindFirstChild("HumanoidRootPart"), char:FindFirstChildOfClass("Humanoid")
+end
+
+local function isAlive(model)
+    local hum = model and model:FindFirstChildOfClass("Humanoid")
+    return hum ~= nil and hum.Health > 0
+end
+
+local function findNearestCocoaEnemy(root)
+    local nearest, nearestDist = nil, math.huge
+    for _, model in ipairs(workspace:GetDescendants()) do
+        if model:IsA("Model") and table.find(CONFIG.CocoaNames, model.Name) and isAlive(model) then
+            local hrp = model:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local dist = (hrp.Position - root.Position).Magnitude
+                if dist < nearestDist then
+                    nearest, nearestDist = model, dist
+                end
+            end
+        end
+    end
+    return nearest
+end
+
+local function hasStopItem()
+    local containers = { LocalPlayer.Backpack, LocalPlayer.Character }
+    for _, container in ipairs(containers) do
+        if container then
+            for _, item in ipairs(container:GetChildren()) do
+                if table.find(CONFIG.ChestStopItems, item.Name) then
+                    return true
+                end
+            end
+        end
+    end
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if table.find(CONFIG.ChestStopItems, obj.Name) and obj:IsA("Tool") then
+            return true
+        end
+    end
+    return false
+end
+
+local function teleportTo(cf)
+    local root = getRoot()
+    if root then
+        root.CFrame = cf
+    end
+end
+
+-- Auto Farm Cocoa
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        if not state.AutoFarm then
+            currentTarget = nil
+            continue
+        end
+        local root = getRoot()
+        if not root then continue end
+
+        if not currentTarget or not isAlive(currentTarget) then
+            currentTarget = findNearestCocoaEnemy(root)
+        end
+
+        local targetRoot = currentTarget and currentTarget:FindFirstChild("HumanoidRootPart")
+        if targetRoot then
+            root.CFrame = targetRoot.CFrame * CONFIG.FarmOffset
+        end
+    end
+end)
+
+-- Auto Attack / Fast Attack
+task.spawn(function()
+    while true do
+        if state.AutoAttack then
+            local root = getRoot()
+            if root and currentTarget and isAlive(currentTarget) then
+                local targetRoot = currentTarget:FindFirstChild("HumanoidRootPart")
+                if targetRoot and (targetRoot.Position - root.Position).Magnitude <= CONFIG.AttackRange then
+                    VirtualUser:ClickButton1(Vector2.new(0, 0))
+                end
+            end
+            local speed = state.FastAttack and (1 + CONFIG.FastAttackSpeedBoost) or 1
+            task.wait(CONFIG.BaseAttackDelay / speed)
+        else
+            task.wait(0.2)
+        end
+    end
+end)
+
+-- Auto Chest Farm
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if not state.AutoChest then continue end
+
+        if hasStopItem() then
+            state.AutoChest = false
+            teleportTo(CONFIG.CastleOfTheSeaCFrame)
+            continue
+        end
+
+        local root = getRoot()
+        if not root then continue end
+
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if not state.AutoChest then break end
+            if obj.Name:match("^Chest") and obj:IsA("BasePart") then
+                local tween = TweenService:Create(root, TweenInfo.new(CONFIG.ChestTweenTime), {
+                    CFrame = obj.CFrame + Vector3.new(0, 3, 0),
+                })
+                tween:Play()
+                tween.Completed:Wait()
+                if firetouchinterest then
+                    firetouchinterest(root, obj, 0)
+                    firetouchinterest(root, obj, 1)
+                end
+                task.wait(0.5)
+                if hasStopItem() then break end
+            end
+        end
+    end
+end)
+
+-- GUI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "FarmGUI"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 220, 0, 230)
+frame.Position = UDim2.new(0, 20, 0.5, -115)
+frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+frame.Active = true
+frame.Draggable = true
+frame.Parent = screenGui
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 6)
+layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+layout.Parent = frame
+
+local padding = Instance.new("UIPadding")
+padding.PaddingTop = UDim.new(0, 8)
+padding.Parent = frame
+
+local function makeToggle(label, key, order)
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(0, 190, 0, 40)
+    button.LayoutOrder = order
+    button.Font = Enum.Font.GothamBold
+    button.TextSize = 14
+    button.TextColor3 = Color3.new(1, 1, 1)
+    button.Parent = frame
+
+    local function refresh()
+        button.Text = label .. ": " .. (state[key] and "ON" or "OFF")
+        button.BackgroundColor3 = state[key] and Color3.fromRGB(40, 160, 60) or Color3.fromRGB(120, 40, 40)
+    end
+
+    button.MouseButton1Click:Connect(function()
+        state[key] = not state[key]
+        refresh()
+    end)
+    refresh()
+end
+
+makeToggle("Auto farm coca", "AutoFarm", 1)
+makeToggle("Auto attack", "AutoAttack", 2)
+makeToggle("Fast attack", "FastAttack", 3)
+makeToggle("Auto chest farm", "AutoChest", 4)
+
+-- Keep the player from being idle-kicked while farming
+LocalPlayer.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
+end)
